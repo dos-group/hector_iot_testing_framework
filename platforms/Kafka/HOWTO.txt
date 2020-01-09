@@ -1,0 +1,26 @@
+##################################
+#Quickstart Guide:
+#https://kafka.apache.org/21/documentation/streams/quickstart
+##################################
+
+1. Start zookeeper server
+bin/zookeeper-server-start.sh config/zookeeper.properties
+
+2. Start Broker
+bin/kafka-server-start.sh config/server.properties
+
+3. Create Topics
+bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic streams-plaintext-input
+
+4. Start Streams application
+bin/kafka-run-class.sh org.apache.kafka.streams.examples.wordcount.WordCountDemo
+or
+mvn clean package
+mvn exec:java -Dexec.mainClass=myapps.Pipe
+
+5. Create Producers and Consumers
+ bin/kafka-console-producer.sh --broker-list localhost:9092 --topic streams-plaintext-input
+ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic streams-wordcount-output --from-beginning --formatter kafka.tools.DefaultMessageFormatter --property print.key=true --property print.value=true --property key.deserializer=org.apache.kafka.common.serialization.StringDeserialize--property value.deserializer=org.apache.kafka.common.serialization.LongDeserializer
+
+6. Alternatively a connector for source/sink
+bin/connect-standalone.sh config/connect-standalone.properties config/connect-file-source.properties bin/connect-standalone.sh config/connect-standalone.properties config/connect-file-source.properties

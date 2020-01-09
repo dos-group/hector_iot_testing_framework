@@ -1,0 +1,9 @@
+
+## Caught SIGINT; Clean up and Exit
+15952  (app) killed
+ (connector) killed
+ (random) killed
+ (consumer) killed
+14915  (broker) killed
+14583  (zookeeper) killed
+Everyone is DEAD. Bye.
