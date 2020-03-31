@@ -91,7 +91,7 @@ class VirtualNetwork:
 		self.emulateNetwork = False
 		self.turned_down = False
 
-	def add_vm(self, image_path, keyfile, username, system, kernel_path="", cpu="", qemu_options=""):
+	def add_vm(self, image_path, keyfile, username, system, kernel_path="", cpu="", qemu_options="", copy_vm=True):
 		"""Creates a virtual machine, adds it to the network and assignes it an IP/MAC pair.
 
 		:param image_path: Path to os image to be used by VM
@@ -116,9 +116,12 @@ class VirtualNetwork:
 		mac = rand_mac()
 		x = len(self.vmList)
 		ip = '10.10.1.{:d}'.format(x+10)
-		hda = "virtualMachine_" + str(x) + ".qcow"
-		copyfile(image_path, hda)
-		vm = VirtualMachine(mac, ip, username, keyfile, hda, kernel_path, system, cpu, qemu_options)
+		if copy_vm:
+			hda = "virtualMachine_" + str(x) + ".qcow"
+			copyfile(image_path, hda)
+		else:
+			hda = image_path
+		vm = VirtualMachine(mac, ip, username, keyfile, hda, kernel_path, system, cpu, qemu_options, copy_vm)
 		self.vmList.append(vm)
 		return vm
 
@@ -131,7 +134,7 @@ class VirtualNetwork:
 
 		"""
 		return self.add_vm(img, "id_rsa", "pi", "qemu-system-arm", "kernel-qemu-4.14.79-stretch",
-							"arm1176", '-append "root=/dev/sda2 panic=1 rootfstype=ext4 rw" -m 256 -M versatilepb -dtb versatile-pb.dtb')
+							"arm1176", '-append "root=/dev/sda2 panic=1 rootfstype=ext4 rw" -m 256 -M versatilepb') #-dtb versatile-pb.dtb
 
 	def add_x86_64_arch(self):
 		"""Uses the add_vm method to add a x86_64 VM running Arch Linux to the network.
@@ -168,6 +171,7 @@ class VirtualNetwork:
 				sub.run("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
 			self.hwList.append(pm)
 			sub.run(SSH_STRING + ["-q", "-i", keyfile, username + "@" + ip, "sudo", "ip", "route", "add", "default", "via", host_ip])
+			print("Added physical machine " + username + "@" + ip)
 		except sub.CalledProcessError:
 			print("Physical machine with IP ", ip, " could not be reached and will not be added to testbed")
 		sub.run(SSH_STRING + ["-q", "-i", keyfile, username + "@" + ip, "sudo", "systemctl", "restart", "systemd-timesyncd"])
@@ -201,7 +205,7 @@ class VirtualNetwork:
 			del self.vmList[0:]
 			sys.exit(2)
 		for vm in self.vmList:
-			print("Setting up VM")
+			print("Starting VM " + vm.username + "@" + vm.ip)
 			qemu_command = vm.system + ' '
 			if vm.kernel != "":
 				qemu_command += ('-kernel ' + vm.kernel + ' ')
@@ -264,17 +268,28 @@ class VirtualNetwork:
 		Needs root privileges.
 
 		"""
+		vm_mac = self.vmList[0].mac if len(self.vmList) > 0 else ""
 		for vm in self.vmList:
 			name = vm.username + "@" + vm.ip
 			sub.Popen(SSH_STRING + ["-i", vm.key, name, "sudo", "shutdown", "-h", "now"])
+			pid = get_pid(grep="qemu", args="macaddr=" + vm.mac)
+			print("Shutting down VM " + name + " and its process with pid " + str(pid))
+			sub.run(["kill", str(pid)])
 		self.reset_network_properties()
 		time.sleep(10)
 		for x in range(len(self.vmList)):
 			hda = self.vmList[x].image_file
-			sub.run(["rm", hda])
+			if self.vmList[x].copy_vm:
+				sub.run(["rm", hda])
 		self.vmList.clear()
 		sub.run(["ip", "link", "delete", self.devName])
-		sub.run(["pkill", "dnsmasq"])
+		if vm_mac != "":
+			pid = get_pid(grep="dnsmasq", args="dhcp-host=" + vm_mac)
+			print("Killing dnsmasq with pid " + str(pid))
+			sub.run(["kill", str(pid)])
+		else:
+			print("Couldn't find started dnsmasq, pkill all dnsmasq processes")
+			sub.run(["pkill", "dnsmasq"])
 		try:
 			os.remove("/var/lib/misc/dnsmasq.leases")
 		except:
@@ -298,7 +313,7 @@ class VirtualMachine:
 	"""Class representing a virtual machine in a testbed.
 
 	"""
-	def __init__(self, mac, ip, username, keyfile, image_file, kernel, system, cpu, qemu_options):
+	def __init__(self, mac, ip, username, keyfile, image_file, kernel, system, cpu, qemu_options, copy_vm):
 		"""Initializes parameters of a VirtualMachine instance.
 
 		:param mac: MAC address of VM
@@ -310,6 +325,7 @@ class VirtualMachine:
 		:param system: System to be emulated by Qemu
 		:param cpu: CPU to be emulated by Qemu
 		:param qemu_options: Additional options in Qemu command
+		:param copy_vm: Should the VM be run on the original file (False) or on a copy (True)
 
 		"""
 		self.mac = mac
@@ -322,6 +338,7 @@ class VirtualMachine:
 		self.system = system
 		self.cpu = cpu
 		self.traffic_shaped = False
+		self.copy_vm = copy_vm
 
 	def wait_for_connection(self):
 		"""Wait until the VM can be reached via SSH and sets its clock via ntp
@@ -330,17 +347,18 @@ class VirtualMachine:
 
 		"""
 		timeout = 0
-		time.sleep(15)
+		time.sleep(10)
 		while True:
 			try:
 				sub.check_output(SSH_STRING + ["-q", "-i", self.key, self.username + "@" + self.ip, "exit"])
 				sub.run(SSH_STRING + ["-q", "-i", self.key, self.username + "@" + self.ip, "sudo", "systemctl", "restart", "systemd-timesyncd"])
+				print("ssh connection to: " +str(self.ip) + " successful!")
 				return 0
 			except sub.CalledProcessError:
 				if timeout > 50:
 					print("VM could not be reached; exiting")
 					sys.exit(3)
-				time.sleep(3)
+				time.sleep(2)
 				timeout += 1
 
 	def upload_script(self, file, dest_folder="/home/pi", execute=True):
@@ -353,6 +371,32 @@ class VirtualMachine:
 		sub.run(SCP_STRING + ["-i", self.key, file, self.username + "@" + self.ip + ":" + dest_folder])
 		if execute:
 			sub.Popen(SSH_STRING + ["-i", self.key, self.username + "@" + self.ip + ":" + dest_folder + "/script.sh"])
+
+	def change_interface_properties(self, property_dict, interface=["tap", "ifb"]):
+		"""Used to change traffic settings for this VM only.
+
+		:param property_dict: Dictionary of netem properties (option:value(s))
+
+		"""
+		interface = interface.copy()
+		id = int(self.ip.split(".")[-1])-10
+		if not self.traffic_shaped:
+			print("Error: Traffic of device {:d} NOT emulated.".format(id))
+			return
+		if(interface != None and len(interface) > 0):
+			for idx in range(len(interface)):
+				interface[idx] += "{:d}".format(id)
+				#print(interface[idx])
+		else:
+			print("Empty interface list or None!")
+			return
+		command = "tc qdisc change dev _interface_ root netem"
+		for key, value in property_dict.items():
+			command += " " + str(key) + " " + str(value)
+		for idx in range(len(interface)):
+			comm = command.replace("_interface_", interface[idx], 1)
+			sub.Popen(comm, shell=True)
+			print("Executing command: " + comm)
 
 	def set_interface_properties(self, property_dict):
 		"""Used to shape traffic for this VM only.
@@ -371,6 +415,8 @@ class VirtualMachine:
 		for key in property_dict:
 			command.append(key)
 			command += (property_dict[key].split(" "))
+		print("TC for " + self.username + "@" + str(self.ip) + " > ", end = '')
+		print(*command, sep = ", ")
 		sub.run(command)
 		#Create intermediate functional block device to shape incoming traffic
 		sub.run(["modprobe", "ifb"])
@@ -394,12 +440,13 @@ class VirtualMachine:
 		ifb_device = "ifb{:d}".format(id)
 		interface = "tap{:d}".format(id)
 
-		sub.run(["tc", "qdisc", "del", "dev", ifb_device, "root", "netem"])
-		sub.run(["tc", "filter", "del", "dev", interface])
-		sub.run(["tc", "qdisc", "del", "dev", interface, "ingress"])
-		sub.run(["ip", "link", "del", "dev", ifb_device])
-
-		sub.run(["tc", "qdisc", "del", "dev", interface, "root", "netem"])
+		#print("Deleting traffic control settings and linked IPs")
+		sub.run(["tc", "qdisc", "del", "dev", ifb_device, "root", "netem"], stderr=sub.DEVNULL)
+		sub.run(["tc", "filter", "del", "dev", interface], stderr=sub.DEVNULL)
+		sub.run(["tc", "qdisc", "del", "dev", interface, "ingress"], stderr=sub.DEVNULL)
+		sub.run(["ip", "link", "del", "dev", ifb_device], stderr=sub.DEVNULL)
+		sub.run(["tc", "qdisc", "del", "dev", interface, "root", "netem"], stderr=sub.DEVNULL)
+		
 		self.traffic_shaped = False
 
 class PhysicalMachine:
@@ -476,7 +523,7 @@ class KafkaExperiment:
 		kafkalog = open("kafka.log", "w+")
 		# Start brokers
 		for config in broker_properties:
-			broker = sub.Popen([kafka_path + '/bin/kafka-server-start.sh', config], stdout=kafkalog)
+			broker = sub.Popen([kafka_path + 'bin/kafka-server-start.sh', config], stdout=kafkalog)
 			print("Broker started with pid " + str(broker.pid))
 			time.sleep(10)
 		# Transfer producer apps
@@ -486,8 +533,9 @@ class KafkaExperiment:
 		for pm in network.hwList:
 			sub.run(SCP_STRING + ["-i", pm.key, producer_path, pm.username + "@"+pm.ip+":/home/" + pm.username + "/producer.jar"])
 		# Create topics
+		print("Create topics...")
 		for tripel in topic_array:
-			os.system(kafka_path + '/bin/kafka-topics.sh --create --zookeeper localhost:' + client_port +
+			os.system(kafka_path + 'bin/kafka-topics.sh --create --zookeeper localhost:' + client_port +
 													' --replication-factor ' + tripel[1] + ' --partitions ' + tripel[2] + ' --topic ' + tripel[0])
 			time.sleep(2)
 
@@ -618,12 +666,12 @@ class FlinkExperiment:
 		# Parse configuration
 		config = configparser.ConfigParser()
 		config.read(config_file)
-		properties = config['FlinkExperiment']
-		flink_dir = properties['flinkDir']
-		flink_conf = properties['flinkConf']
-		app_path = properties['appPath']
-		app_arguments = properties['appArguments']
-		flink_for_edge = properties.getboolean('flinkForEdge')
+		self.properties = config['FlinkExperiment']
+		flink_dir = self.properties['flinkDir']
+		flink_conf = self.properties['flinkConf']
+		app_path = self.properties['appPath']
+		app_arguments = self.properties['appArguments']
+		flink_for_edge = self.properties.getboolean('flinkForEdge')
 
 		print("Copying Flink configuration")
 		try:
@@ -657,7 +705,7 @@ class FlinkExperiment:
 			sub.Popen(SSH_STRING + ["-i", pm.key, name, tm_path, "start"])
 		for vm in network.vmList:
 			name = vm.username + "@" + vm.ip
-			sub.Popen(SSH_STRING + ["-i", vm.key, name, tm_path, "start"])
+			sub.Popen(SSH_STRING + ["-i", vm.key, name, tm_path, "start"]) #start-foreground
 		for tm in range(network.lhClients):
 			sub.run([flink_dir+"/bin/taskmanager.sh", "start"])
 
@@ -673,9 +721,11 @@ class FlinkExperiment:
 		while True:
 			response = requests.get("http://" + network.bridge_ip + ":8081/overview")
 			tm = json.loads(response.text)['taskmanagers']
+			#print( str(tm) + " / " + str(len(network.vmList) + network.lhClients + len(network.hwList)) )
 			if tm == (len(network.vmList) + network.lhClients + len(network.hwList)):
 				return
 			time.sleep(3)
+		print("Flink Experiment startet on host")
 
 	def start_experiment(self):
 		"""Runs a previously set up Flink experiment by uploading the task to the jobmanager.
@@ -697,7 +747,7 @@ class FlinkExperiment:
 		Cancels all running Flink jobs and stops all taskmanagers and the jobmanager.
 
 		"""
-		string = str(sub.run([self.flink_dir+"/bin/flink", "list"], capture_output=True))
+		string = str(sub.run([self.flink_dir+"/bin/flink", "list"])) #str(sub.run([self.flink_dir+"/bin/flink", "list"], capture_output=True))
 		pattern = "[0-9a-f]{32}"
 		jobs = re.findall(pattern, string)
 		if self.flink_for_edge:
@@ -738,7 +788,7 @@ class FlinkExperiment:
 		"""Turns down a running Flink experiment by cancelling all jobs and stopping job and taskmanagers.
 		   Does not stop taskmanagers on physical machines!
 		"""
-		string = str(sub.run([self.flink_dir + "/bin/flink", "list"], capture_output=True))
+		string = str(sub.run([self.flink_dir + "/bin/flink", "list"])) #str(sub.run([self.flink_dir + "/bin/flink", "list"], capture_output=True))
 		pattern = "[0-9a-f]{32}"
 		jobs = re.findall(pattern,string)
 		for job in jobs:
@@ -753,6 +803,34 @@ class FlinkExperiment:
 			print("No config file to restore")
 			os.remove(self.flink_dir+"/conf/flink-conf.yaml")
 		self.turned_down = True
+
+	def get_all_taskslots(self, network, mode='all'):
+		""" Returns all TaskSlots for this Flink experiment from all in the network existing Taskmanagers
+		
+		:param network: VirtualNetwork object
+		:param mode: 'all' returns all existing TaskSlots, 'free' returns number of free TaskSlots (may be negative if more needed than available)
+		
+		"""
+		slots = 0
+		for vm in network.vmList:
+			multiplicator = 1
+			ssh = ["-q", "-i", vm.key, vm.username + "@" + vm.ip]
+			comm = ssh + ["cat", "Flink/conf/flink-conf.yaml", "|", "grep", "-i", "taskmanager.numberOfTaskSlots:"]
+			try:
+				# Get number of running TaskManagers on this machine
+				pgrep = ssh + ["pgrep", "java", "-a", "|", "grep", "TaskManagerRunner"]
+				procs = sub.check_output(SSH_STRING + pgrep, universal_newlines=True)
+				print("TaskManagers running on " + vm.username + "@" + vm.ip + " " + str(len(procs.split("\n"))-1))
+				multiplicator = len(procs.split("\n"))-1
+			except Exception as ex:
+				# No TaskManager running on this machine => continue
+				print(ex)
+				continue
+			slots += multiplicator * int(sub.check_output(SSH_STRING + comm, universal_newlines=True).replace("taskmanager.numberOfTaskSlots: ", "").replace("\n", ""))
+		#TODO do same for hwList and lhClients
+		if(mode == 'free'):
+			pass
+		return slots
 
 	def __del__(self):
 		"""Turns down a running Flink experiment by cancelling all jobs and stopping job and taskmanagers.
@@ -792,7 +870,8 @@ def start_zookeeper(kafka_path, data_dir, client_port, max_client_cnxns):
 	zkconfig.write("maxClientCnxns="+str(max_client_cnxns)+"\n")
 	zkconfig.flush()
 	zkconfig.close()
-	os.system(kafka_path + '/bin/zookeeper-server-start.sh zkConfig.temp >zookeeper.log &')
+	print("Starting zookeeper server")
+	os.system(kafka_path + 'bin/zookeeper-server-start.sh zkConfig.temp >zookeeper.log &')
 
 
 def start_app(app_path, app_arguments):
@@ -843,3 +922,23 @@ def measure_throughput(of, dur, iface='br0'):
 		time.sleep(1)
 	file.close()
 	return (tx_total/dur, rx_total/dur, (tx_total+rx_total)/dur)
+
+def get_pid(grep, args):
+	"""Returns the pid of a given process name grep with the specific arguments args
+	
+	:param grep: name of the process
+	:param args: additional grep parameter if more than one process with the given name (grep) exist
+	
+	"""
+	try:
+		if args != "":
+			qemu_pids = sub.check_output('pgrep ' + grep + ' -a | grep ' + args, shell=True, universal_newlines=True)
+		else:
+			qemu_pids = sub.check_output('pgrep ' + grep + ' -a', shell=True, universal_newlines=True)
+		pids = str(qemu_pids[:-2]).split('\n')
+		for pid in pids:
+			return int(pid.lstrip().split(' ')[0])
+	except Exception as e:
+		print("No processes " + args + " running to retrieve pid")
+		print(str(e))
+		return -1
