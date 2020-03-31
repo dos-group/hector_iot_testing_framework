@@ -1,0 +1,26 @@
+# Qemu qcow and iso files
+*.qcow
+*.qcow2
+*.iso
+
+# logs, out files and swap
+*.log
+*.out
+*.log.*
+*.out.*
+*.kate-swp
+
+# Archives
+*.7z
+*.rar
+*.zip
+*.gz
+*.gzip
+*.tgz
+*.bzip
+*.bzip2
+*.bz2
+*.xz
+*.lzma
+*.cab
+*.xar

@@ -1,0 +1,12 @@
+qemu-system-arm \
+-M versatilepb \
+-kernel ../QEMU/kernel-qemu-4.14.79-stretch \
+-append "root=/dev/sda2 panic=1 rootfstype=ext4 rw" \
+-hda raspbian-stretch-lite.qcow \
+-dtb ../QEMU/versatile-pb.dtb \
+-cpu arm1176 \
+-m 256 \
+-no-reboot \
+-machine versatilepb \
+-net nic \
+-net user,hostfwd=tcp::2222-:22,hostfwd=tcp::22280-:80

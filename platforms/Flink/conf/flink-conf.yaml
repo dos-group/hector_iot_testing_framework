@@ -44,8 +44,8 @@ jobmanager.heap.size: 1024m
 
 # The heap size for the TaskManager JVM
 
-taskmanager.heap.size: 1024m
-#taskmanager.heap.size: 32m
+taskmanager.heap.size: 128m
+
 
 # The number of task slots that each TaskManager offers. Each slot runs one parallel pipeline.
 
@@ -56,7 +56,7 @@ taskmanager.numberOfTaskSlots: 1
 parallelism.default: 1
 
 # The default file system scheme and authority.
-#
+# 
 # By default file paths without scheme are interpreted relative to the local
 # root file system 'file:///'. Use this to override the default and interpret
 # relative paths relative to a different file system,
@@ -75,9 +75,9 @@ parallelism.default: 1
 # The path where metadata for master recovery is persisted. While ZooKeeper stores
 # the small ground truth for checkpoint and leader election, this location stores
 # the larger objects, like persisted dataflow graphs.
-#
+# 
 # Must be a durable file system that is accessible from all nodes
-# (like HDFS, S3, Ceph, nfs, ...)
+# (like HDFS, S3, Ceph, nfs, ...) 
 #
 # high-availability.storageDir: hdfs:///flink/ha/
 
@@ -116,22 +116,36 @@ parallelism.default: 1
 # state.savepoints.dir: hdfs://namenode-host:port/flink-checkpoints
 
 # Flag to enable/disable incremental checkpoints for backends that
-# support incremental checkpoints (like the RocksDB state backend).
+# support incremental checkpoints (like the RocksDB state backend). 
 #
 # state.backend.incremental: false
 
+# The failover strategy, i.e., how the job computation recovers from task failures.
+# Only restart tasks that may have been affected by the task failure, which typically includes
+# downstream tasks and potentially upstream tasks if their produced data is no longer available for consumption.
+
+jobmanager.execution.failover-strategy: region
+
 #==============================================================================
-# Web Frontend
+# Rest & web frontend
 #==============================================================================
 
-# The address under which the web-based runtime monitor listens.
+# The port to which the REST client connects to. If rest.bind-port has
+# not been specified, then the server will bind to this port as well.
 #
-#web.address: 0.0.0.0
-
-# The port under which the web-based runtime monitor listens.
-# A value of -1 deactivates the web server.
-
 rest.port: 8081
+
+# The address to which the REST client will connect to
+#
+#rest.address: 0.0.0.0
+
+# Port range for the REST and web server to bind to.
+#
+#rest.bind-port: 8080-8090
+
+# The address that the REST & web server binds to
+#
+#rest.bind-address: 0.0.0.0
 
 # Flag to specify whether job submission is enabled from the web-based
 # runtime monitor. Uncomment to disable.
@@ -179,13 +193,13 @@ rest.port: 8081
 #
 # classloader.resolve-order: child-first
 
-# The amount of memory going to the network stack. These numbers usually need
+# The amount of memory going to the network stack. These numbers usually need 
 # no tuning. Adjusting them may be necessary in case of an "Insufficient number
-# of network buffers" error. The default min is 64MB, teh default max is 1GB.
-#
+# of network buffers" error. The default min is 64MB, the default max is 1GB.
+# 
 # taskmanager.network.memory.fraction: 0.1
-# taskmanager.network.memory.min: 64MB
-# taskmanager.network.memory.max: 1GB
+taskmanager.network.memory.min: 32mb
+# taskmanager.network.memory.max: 1gb
 
 #==============================================================================
 # Flink Cluster Security Configuration
@@ -242,3 +256,4 @@ rest.port: 8081
 
 # Interval in milliseconds for refreshing the monitored directories.
 #historyserver.archive.fs.refresh-interval: 10000
+
