@@ -115,7 +115,10 @@ class VirtualNetwork:
 			sys.exit(1)
 		mac = rand_mac()
 		x = len(self.vmList)
-		ip = '10.10.1.{:d}'.format(x+10)
+		ip_prefix = self.bridge_ip.rfind('.')
+		ip = self.bridge_ip[:ip_prefix] + "." + str(x+10)
+		#ip = '10.10.1.{:d}'.format(x+10)
+		#ip = "10.10.4.10"
 		if copy_vm:
 			hda = "virtualMachine_" + str(x) + ".qcow"
 			copyfile(image_path, hda)
@@ -182,15 +185,17 @@ class VirtualNetwork:
 			pm.shutdown()
 		self.hwList.clear()
 
-	def run_machines(self):
+	def run_machines(self, dnsconf="dnsmasq.conf"):
 		"""Starts all virtual machines that have been added to the testbed.
 
+		:param dnsconf: path and name of used dnsmasq config file
 		dnsmasq is used to manage IPs of virtual machines.
 
 		Needs root privileges.
 
 		"""
-		dhcp_command = "dnsmasq --conf-file=dnsmasq.conf"
+		#dhcp_command = "dnsmasq --conf-file=dnsmasq.conf"
+		dhcp_command = "dnsmasq --conf-file=" + dnsconf
 		for vm in self.vmList:
 			print("Mapping",vm.mac ,"to", vm.ip)
 			mapping=" --dhcp-host="+vm.mac + "," + vm.ip
